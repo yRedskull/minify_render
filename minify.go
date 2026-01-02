@@ -63,6 +63,7 @@ func NewRendererWithFuncs(pattern, version string, ttl time.Duration, cacheSize 
 	}
 	m.Add("text/html", htmlMin)
 
+
 	var c *lru.Cache
 	if cacheSize > 0 {
 		c, err = lru.New(cacheSize)
@@ -126,8 +127,8 @@ func inmMatches(inm string, etag string) bool {
 	return false
 }
 
-func (r *Renderer) Render(status_http int,c *gin.Context, name string, data any) {
-	if gin.Mode() == gin.DebugMode {
+func (r *Renderer) RenderOnlyGet(status_http int, c *gin.Context, name string, data any) {
+	if IsDebugMode() {
 		if err := r.ReloadTemplates(); err != nil {
 			log.Printf("reload templates failed: %v", err)
 		}
@@ -149,6 +150,18 @@ func (r *Renderer) Render(status_http int,c *gin.Context, name string, data any)
 		return
 	}
 
+	r.Render(status_http, c, name, data)
+}
+
+func (r *Renderer) Render(status_http int,c *gin.Context, name string, data any) {
+	if IsDebugMode() {
+		if err := r.ReloadTemplates(); err != nil {
+			log.Printf("reload templates failed: %v", err)
+		}
+	}
+
+	contentType := "text/html; charset=utf-8"
+
 	key := c.Request.URL.Path + "?" + c.Request.URL.RawQuery + "|tmpl:" + name + "|v:" + r.templateVersion
 
 	// If cache is enabled, attempt read path
@@ -160,7 +173,8 @@ func (r *Renderer) Render(status_http int,c *gin.Context, name string, data any)
 					c.Status(http.StatusNotModified)
 					return
 				}
-				c.Header("Content-Type", ci.ContentType)
+				
+				c.Header("Content-Type", contentType)
 				c.Header("ETag", `W/"`+ci.ETag+`"`)
 				c.Header("Cache-Control", "public, max-age=60")
 				c.Header("Vary", "Accept-Encoding")
@@ -200,7 +214,7 @@ func (r *Renderer) Render(status_http int,c *gin.Context, name string, data any)
 	if r.cache != nil {
 		sum := sha256.Sum256(dst.Bytes())
 		etag := hex.EncodeToString(sum[:])
-		contentType := "text/html; charset=utf-8"
+		
 
 		c.Header("Content-Type", contentType)
 		c.Header("ETag", `W/"`+etag+`"`)
@@ -220,8 +234,7 @@ func (r *Renderer) Render(status_http int,c *gin.Context, name string, data any)
 		return
 	}
 
-	// cache disabled: send minified body without ETag/cache-control logic
-	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.Header("Content-Type", contentType)
 	c.Writer.WriteHeader(status_http)
 	_, _ = io.Copy(c.Writer, bytes.NewReader(dst.Bytes()))
 }
