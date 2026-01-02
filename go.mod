@@ -1,4 +1,4 @@
-module minify_render
+module github.com/yRedskull/minify_render
 
 go 1.25.4
 
