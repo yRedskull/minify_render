@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,27 +22,6 @@ var (
 	RENDERER *Renderer
 )
 
-// CachedItem guarda o corpo minificado e o etag
-type CachedItem struct {
-	Body        []byte
-	ETag        string
-	ContentType string
-	CreatedAt   time.Time
-}
-
-type Renderer struct {
-	// old field removed or kept for backward compat — we'll use atomic storage
-	// templates *template.Template   // NOT used directly anymore
-	templatesVal    atomic.Value // stores *template.Template
-	templatePattern string
-	funcMap         template.FuncMap
-	autoReload      bool
-
-	minifier        *minify.M
-	cache           *lru.Cache
-	templateVersion string
-	ttl             time.Duration
-}
 
 // --- no NewRendererWithFuncs (apenas adicionar armazenamento da pattern/funcs e store inicial) ---
 func NewRendererWithFuncs(pattern, version string, ttl time.Duration, cacheSize int, funcs template.FuncMap) (*Renderer, error) {
@@ -127,7 +105,7 @@ func inmMatches(inm string, etag string) bool {
 	return false
 }
 
-func (r *Renderer) RenderOnlyGet(status_http int, c *gin.Context, name string, data any) {
+func (r *Renderer) RenderOnlyGet(renderParams RenderParams, c *gin.Context) {
 	if IsDebugMode() {
 		if err := r.ReloadTemplates(); err != nil {
 			log.Printf("reload templates failed: %v", err)
@@ -143,17 +121,17 @@ func (r *Renderer) RenderOnlyGet(status_http int, c *gin.Context, name string, d
 			return
 		}
 
-		if err := tmpl.ExecuteTemplate(c.Writer, name, data); err != nil {
+		if err := tmpl.ExecuteTemplate(c.Writer, renderParams.Template, renderParams.Data); err != nil {
 			log.Printf("template execute error: %v", err)
 			c.String(http.StatusInternalServerError, "template render error")
 		}
 		return
 	}
 
-	r.Render(status_http, c, name, data)
+	r.Render(renderParams, c)
 }
 
-func (r *Renderer) Render(status_http int,c *gin.Context, name string, data any) {
+func (r *Renderer) Render(renderParams RenderParams, c *gin.Context) {
 	if IsDebugMode() {
 		if err := r.ReloadTemplates(); err != nil {
 			log.Printf("reload templates failed: %v", err)
@@ -162,7 +140,7 @@ func (r *Renderer) Render(status_http int,c *gin.Context, name string, data any)
 
 	contentType := "text/html; charset=utf-8"
 
-	key := c.Request.URL.Path + "?" + c.Request.URL.RawQuery + "|tmpl:" + name + "|v:" + r.templateVersion
+	key := c.Request.URL.Path + "?" + c.Request.URL.RawQuery + "|tmpl:" + renderParams.Template + "|v:" + r.templateVersion
 
 	// If cache is enabled, attempt read path
 	if r.cache != nil {
@@ -178,7 +156,7 @@ func (r *Renderer) Render(status_http int,c *gin.Context, name string, data any)
 				c.Header("ETag", `W/"`+ci.ETag+`"`)
 				c.Header("Cache-Control", "public, max-age=60")
 				c.Header("Vary", "Accept-Encoding")
-				c.Writer.WriteHeader(status_http)
+				c.Writer.WriteHeader(renderParams.StatusHttp)
 				_, _ = c.Writer.Write(ci.Body)
 				return
 			}
@@ -196,7 +174,7 @@ func (r *Renderer) Render(status_http int,c *gin.Context, name string, data any)
 		c.String(http.StatusInternalServerError, "template error")
 		return
 	}
-	if err := tmpl.ExecuteTemplate(buf, name, data); err != nil {
+	if err := tmpl.ExecuteTemplate(buf, renderParams.Template, renderParams.Data); err != nil {
 		log.Printf("template execute error: %v", err)
 		c.String(http.StatusInternalServerError, "template render error")
 		return
@@ -229,13 +207,13 @@ func (r *Renderer) Render(status_http int,c *gin.Context, name string, data any)
 		}
 		r.cache.Add(key, ci)
 
-		c.Writer.WriteHeader(status_http)
+		c.Writer.WriteHeader(renderParams.StatusHttp)
 		_, _ = io.Copy(c.Writer, bytes.NewReader(dst.Bytes()))
 		return
 	}
 
 	c.Header("Content-Type", contentType)
-	c.Writer.WriteHeader(status_http)
+	c.Writer.WriteHeader(renderParams.StatusHttp)
 	_, _ = io.Copy(c.Writer, bytes.NewReader(dst.Bytes()))
 }
 
