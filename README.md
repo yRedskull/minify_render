@@ -12,6 +12,6 @@ var err_render error
 
 ```go
 func View(c *gin.Context) {
-	minify_render.RENDERER.Render(http.StatusOK, c, "index.html", nil)
+	minify_render.RENDERER.Render(minify_render.RenderParams{StatusHttp: http.StatusOK, Template: "index.html", Data: nil}, c)
 }
 ```
